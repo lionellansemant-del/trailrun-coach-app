@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="trailrun-app-version" content="v2.5.0" />
+  <meta name="trailrun-app-version" content="v2.6.0" />
   <title>TrailRun Coach — Plateforme Interactive Trail & Running</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- SDK Firebase Realtime Database -->
@@ -473,6 +473,60 @@
     return svgs[posture] || svgs.squat;
   }
 
+
+  /**************************************************************************
+   * 2B. REPÈRES MONTAGNE, RANDO-COURSE & NUTRITION TRAIL/ULTRA
+   **************************************************************************/
+  function getTrailSessionMeta(c, planOverride = null) {
+    if (!c) return null;
+    const base = c.trailMeta || {};
+    const ov = planOverride?.trailMetaOverride || {};
+    const nameLow = (c.nom || '').toLowerCase();
+    const isTrailOrLong = (c.dplus && c.dplus > 0) || c.duree >= 90 || c.isRace ||
+      nameLow.includes('trail') || nameLow.includes('rando') || nameLow.includes('cotes') ||
+      nameLow.includes('bosses') || nameLow.includes('descente') || nameLow.includes('choc') || nameLow.includes('ultra');
+
+    if (ov.isMountainMode === false) return null;
+    if (!isTrailOrLong && !base.isMountainMode && !ov.isMountainMode) {
+      return null;
+    }
+
+    let defaultEffortUp = 'Endurance fondamentale contrôlée (respiration nasale / aisance)';
+    let defaultWalkRule = 'Marche active dès que la pente dépasse 12-15 % ou en côte raide';
+    let defaultDownhill = 'Foulée souple et relâchée, fréquence élevée pour limiter la casse musculaire';
+    let defaultFueling = 'Hydratation toutes les 15-20 min + prise énergétique toutes les 45-60 min';
+
+    if (nameLow.includes('rando-course') || nameLow.includes('choc') || nameLow.includes('ultra') || c.duree >= 180) {
+      defaultEffortUp = 'Gestion économie Ultra (RPE 4-5/10 max en montée, jamais dans le rouge)';
+      defaultWalkRule = 'Rando-course : marche active dynamique mains sur cuisses/bâtons dès 8-10 % de pente';
+      defaultDownhill = 'Amorti silencieux, buste légèrement engagé, gestion de la casse de fibres';
+      defaultFueling = 'Toutes les 45 min : 30-50g glucides + 500ml eau/électrolytes par heure';
+    } else if (nameLow.includes('cotes') || nameLow.includes('bosses') || nameLow.includes('faux-plat')) {
+      defaultEffortUp = 'Puissance soutenue en côte (RPE 7-8/10), appuis dynamiques avant-pied';
+      defaultWalkRule = 'Course dynamique sur les répétitions • Récupération en descente trot très lent/marche';
+      defaultDownhill = 'Descente en récupération active sans freiner brusquement avec les talons';
+      defaultFueling = 'Hydratation régulière pendant les récupérations en descente (500ml/h)';
+    } else if (nameLow.includes('descente')) {
+      defaultEffortUp = 'Montée en endurance tranquille (récupération active)';
+      defaultWalkRule = 'Marche active en remontée pour garder toute la lucidité technique';
+      defaultDownhill = 'Focus pose de pied rapide, regard 3-5m devant, bras écartés pour l’équilibre';
+      defaultFueling = 'Hydratation avant et après la séance + gorgées régulières';
+    } else if (c.isRace || nameLow.includes('jour de course')) {
+      defaultEffortUp = 'Départ prudent (RPE 5-6/10) • Lisser l’effort cardiaque/respiratoire';
+      defaultWalkRule = 'Marche active stratégique dès les forts pourcentages pour préserver les quadriceps';
+      defaultDownhill = 'Relâchement total en descente, relance fluide en sortie de virage';
+      defaultFueling = 'Plan course : boire toutes les 15 min + ravito solide/gel toutes les 40-45 min';
+    }
+
+    return {
+      isMountainMode: ov.isMountainMode !== undefined ? ov.isMountainMode : (base.isMountainMode !== undefined ? base.isMountainMode : true),
+      effortUp: ov.effortUp || base.effortUp || defaultEffortUp,
+      walkSlope: ov.walkSlope || base.walkSlope || defaultWalkRule,
+      downhillStrategy: ov.downhillStrategy || base.downhillStrategy || defaultDownhill,
+      fuelingWindow: ov.fuelingWindow || base.fuelingWindow || defaultFueling
+    };
+  }
+
   /**************************************************************************
    * 3. UTILITAIRES DATE, VMA, GPX (HAVERSINE) & CTL/ATL/TSB
    **************************************************************************/
@@ -746,7 +800,7 @@
     const monday = formatDateISO(getMonday(new Date()));
     return {
       coachPin: '1234',
-      appVersion: 'v2.5.0',
+      appVersion: 'v2.6.0',
       lastAppUpdate: null,
       coachProfile: {
         name: 'Coach TrailRun',
@@ -786,6 +840,43 @@
         messagingSenderId: '785213610407',
         appId: '1:785213610407:web:d43ff97826b6349ada3e82'
       },
+      weekTemplates: [
+        {
+          id: 'tpl_foncier_trail',
+          name: 'Bloc Foncier Trail (4 séances)',
+          category: 'Foncier',
+          description: 'Semaine type développement endurance trail + renfo genou/gainage',
+          items: [
+            { dayOffset: 1, courseId: 'c20', renfoId: 'r15', echauffementId: 't0', recupId: 't0' },
+            { dayOffset: 3, courseId: 'c93', renfoId: 'r0', echauffementId: 't1', recupId: 't0' },
+            { dayOffset: 5, courseId: 'c18', renfoId: 'r1', echauffementId: 't0', recupId: 't0' },
+            { dayOffset: 6, courseId: 'c31', renfoId: 'r0', echauffementId: 't0', recupId: 't0' }
+          ]
+        },
+        {
+          id: 'tpl_weekend_choc',
+          name: 'Semaine Week-End Choc Ultra',
+          category: 'Choc Ultra',
+          description: 'Préparation spécifique ultra-trail avec enchaînement Day 1 + Day 2 rando-course',
+          items: [
+            { dayOffset: 1, courseId: 'c27', renfoId: 'r8', echauffementId: 't0', recupId: 't0' },
+            { dayOffset: 3, courseId: 'c104', renfoId: 'r0', echauffementId: 't1', recupId: 't0' },
+            { dayOffset: 5, courseId: 'c48', renfoId: 'r0', echauffementId: 't0', recupId: 't0' },
+            { dayOffset: 6, courseId: 'c49', renfoId: 'r0', echauffementId: 't0', recupId: 't0' }
+          ]
+        },
+        {
+          id: 'tpl_affutage_trail',
+          name: 'Semaine d’Affûtage (Pré-Course)',
+          category: 'Affûtage',
+          description: 'Baisse du volume (-40%) avec rappels de dynamisme et mobilité douce',
+          items: [
+            { dayOffset: 1, courseId: 'c19', renfoId: 'r2', echauffementId: 't0', recupId: 't0' },
+            { dayOffset: 3, courseId: 'c90', renfoId: 'r0', echauffementId: 't1', recupId: 't0' },
+            { dayOffset: 5, courseId: 'c27', renfoId: 'r9', echauffementId: 't0', recupId: 't0' }
+          ]
+        }
+      ],
       catalogCourse: INITIAL_CATALOG_COURSE,
       catalogRenfo: INITIAL_CATALOG_RENFO,
       catalogTemps: INITIAL_CATALOG_TEMPS,
@@ -832,6 +923,9 @@
         accentColor: '#10b981',
         themeMode: 'dark'
       };
+    }
+    if (!Array.isArray(targetState.weekTemplates)) {
+      targetState.weekTemplates = getDefaultState().weekTemplates;
     }
     if (!Array.isArray(targetState.coachNotifications)) {
       targetState.coachNotifications = [];
@@ -2418,6 +2512,14 @@
               <button onclick="ui.plannerMode='year'; render()" class="px-3 py-1.5 rounded-lg ${ui.plannerMode==='year' ? 'bg-emerald-500 text-slate-950' : 'text-slate-400'}">Année</button>
             </div>
 
+            <button onclick="openDuplicateWeekModal('${ath.id}', '${monday}')" class="px-3.5 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-xs font-bold transition">
+              📋 Dupliquer semaine
+            </button>
+
+            <button onclick="openWeekTemplatesModal('${ath.id}', '${monday}')" class="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-bold transition">
+              🧱 Blocs Types (${(state.weekTemplates || []).length})
+            </button>
+
             <button onclick="adaptWeekCycleFatigue('${ath.id}', '${monday}')" class="px-3.5 py-2 rounded-xl bg-pink-500/20 hover:bg-pink-500/30 border border-pink-500/40 text-pink-300 text-xs font-bold transition">
               🌸 Adapter la semaine (Cycle / Fatigue)
             </button>
@@ -2488,7 +2590,19 @@
                             <button onclick="deletePlannedSession('${ath.id}', '${p.id}')" class="text-rose-400 hover:text-rose-300">✕</button>
                           </div>
                         </div>
-                        ${c && c.facteurVMA > 0 ? `<div class="text-[11px] text-slate-400">⚡ ${calcPaceFromVMA(ath.vma, c.facteurVMA)}</div>` : ''}
+                        ${(() => {
+                          const tMeta = getTrailSessionMeta(c, p);
+                          if (tMeta) {
+                            return `
+                              <div class="p-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-[10px] space-y-0.5 text-amber-200">
+                                <div class="font-bold text-amber-400">⛰️ Montagne / Rando-Course</div>
+                                <div>🥾 ${tMeta.walkSlope}</div>
+                                <div>🥤 ${tMeta.fuelingWindow}</div>
+                              </div>
+                            `;
+                          }
+                          return (c && c.facteurVMA > 0) ? `<div class="text-[11px] text-slate-400">⚡ ${calcPaceFromVMA(ath.vma, c.facteurVMA)}</div>` : '';
+                        })()}
                         ${t1 && t1.duree > 0 ? `<div class="text-[11px] text-amber-300">🔥 Échauff. : ${t1.nom}</div>` : ''}
                         ${t2 && t2.duree > 0 ? `<div class="text-[11px] text-amber-300">🧘 Récup : ${t2.nom}</div>` : ''}
                         ${r && r.id !== 'r0' ? `<div class="text-[11px] text-sky-400 font-semibold">💪 ${r.nom}</div>` : ''}
@@ -3239,12 +3353,44 @@
                           </div>
                         </div>
 
-                        <div class="flex flex-wrap gap-2 text-xs">
-                          ${c && c.facteurVMA > 0 ? `<span class="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-semibold">⚡ Allure : ${calcPaceFromVMA(ath.vma, c.facteurVMA)}</span>` : ''}
-                          ${c && c.dplus > 0 ? `<span class="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-semibold">⛰️ ${c.dplus} m D+</span>` : ''}
-                          ${t1 && t1.duree > 0 ? `<span class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-500 font-semibold">🔥 Échauffement : ${t1.nom}</span>` : ''}
-                          ${t2 && t2.duree > 0 ? `<span class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-500 font-semibold">🧘 Récup : ${t2.nom}</span>` : ''}
-                        </div>
+                        ${(() => {
+                          const tMeta = getTrailSessionMeta(c, p);
+                          return `
+                            <div class="flex flex-wrap gap-2 text-xs">
+                              ${!tMeta && c && c.facteurVMA > 0 ? `<span class="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-semibold">⚡ Allure : ${calcPaceFromVMA(ath.vma, c.facteurVMA)}</span>` : ''}
+                              ${tMeta && c && c.facteurVMA > 0 ? `<span class="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-semibold">⛰️ Effort Montagne (plat équiv. ${calcPaceFromVMA(ath.vma, c.facteurVMA).split(' ')[0]})</span>` : ''}
+                              ${c && c.dplus > 0 ? `<span class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30 font-bold">⛰️ ${c.dplus} m D+</span>` : ''}
+                              ${c && c.duree > 0 ? `<span class="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-semibold">⏱️ ${c.duree} min</span>` : ''}
+                              ${t1 && t1.duree > 0 ? `<span class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-500 font-semibold">🔥 Échauffement : ${t1.nom}</span>` : ''}
+                              ${t2 && t2.duree > 0 ? `<span class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-500 font-semibold">🧘 Récup : ${t2.nom}</span>` : ''}
+                            </div>
+
+                            ${tMeta ? `
+                              <div class="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-emerald-500/10 to-sky-500/10 border border-amber-500/35 space-y-2.5">
+                                <div class="flex items-center justify-between gap-2">
+                                  <span class="text-xs font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                                    🧭 Aide-mémoire Trail & Ultra
+                                  </span>
+                                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-300">Repères terrain</span>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
+                                  <div class="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 space-y-1">
+                                    <div class="font-extrabold text-sky-600 dark:text-sky-400">🥤 Hydratation & Nutrition</div>
+                                    <p class="text-slate-700 dark:text-slate-300 leading-relaxed">${tMeta.fuelingWindow}</p>
+                                  </div>
+                                  <div class="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 space-y-1">
+                                    <div class="font-extrabold text-emerald-600 dark:text-emerald-400">🥾 Stratégie Montée & Rando-Course</div>
+                                    <p class="text-slate-700 dark:text-slate-300 leading-relaxed"><strong>Montée :</strong> ${tMeta.effortUp}</p>
+                                    <p class="text-slate-600 dark:text-slate-400 leading-relaxed"><strong>Seuil marche :</strong> ${tMeta.walkSlope}</p>
+                                  </div>
+                                </div>
+                                <div class="px-2.5 py-2 rounded-xl bg-white/70 dark:bg-slate-900/80 border border-slate-200/70 dark:border-slate-800 text-xs text-slate-700 dark:text-slate-300">
+                                  <strong class="text-amber-600 dark:text-amber-400">⬇️ Stratégie Descente :</strong> ${tMeta.downhillStrategy}
+                                </div>
+                              </div>
+                            ` : ''}
+                          `;
+                        })()}
 
                         ${r && r.id !== 'r0' ? `
                           <div class="p-3 rounded-xl bg-sky-500/10 border border-sky-500/30 flex flex-wrap items-center justify-between gap-2">
@@ -3539,6 +3685,293 @@
   /**************************************************************************
    * 9. MODALS & ACTIONS MÉTIER (AVEC DÉCLENCHEMENT NOTIFICATIONS EN DIRECT)
    **************************************************************************/
+
+  /**************************************************************************
+   * 9B. DUPLICATION DE SEMAINE & BLOCS TYPES (FONCIER, CHOC, AFFÛTAGE)
+   **************************************************************************/
+  function openDuplicateWeekModal(athleteId, sourceMondayISO) {
+    const ath = state.athletes.find(a => a.id === athleteId);
+    if (!ath) return;
+    const weekDates = Array.from({ length: 7 }, (_, i) => addDays(sourceMondayISO, i));
+    const sourcePlans = ath.plans.filter(p => weekDates.includes(p.date));
+    const nextMonday = addDays(sourceMondayISO, 7);
+
+    openModal(`
+      <div class="space-y-4">
+        <div class="flex items-center gap-2.5 pr-8">
+          <span class="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xl">📋</span>
+          <div>
+            <h3 class="text-lg font-extrabold">Dupliquer la semaine — ${ath.name}</h3>
+            <p class="text-xs text-slate-400">Source : Semaine du ${formatDateFR(sourceMondayISO)} (${sourcePlans.length} séance(s))</p>
+          </div>
+        </div>
+
+        ${sourcePlans.length === 0 ? `
+          <div class="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300">
+            ⚠️ Cette semaine est vide. Ajoutez d'abord des séances ou appliquez un Bloc Type.
+          </div>
+        ` : `
+          <div class="space-y-3">
+            <div>
+              <label class="text-xs font-bold text-slate-400 block mb-1">Semaine cible (choisir n'importe quel jour de la semaine cible)</label>
+              <input id="dup-target-date" type="date" value="${nextMonday}" class="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-bold" />
+            </div>
+            <div>
+              <label class="text-xs font-bold text-slate-400 block mb-1">Nombre de semaines consécutives à répéter (1 à 4)</label>
+              <select id="dup-repeat-count" class="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-bold">
+                <option value="1">1 semaine (copie simple)</option>
+                <option value="2">2 semaines consécutives</option>
+                <option value="3">3 semaines consécutives</option>
+                <option value="4">4 semaines consécutives (cycle complet)</option>
+              </select>
+            </div>
+            <label class="flex items-center gap-2 text-xs cursor-pointer">
+              <input id="dup-replace-existing" type="checkbox" class="accent-emerald-500 w-4 h-4" />
+              <span>Remplacer les séances déjà existantes sur les semaines cibles</span>
+            </label>
+          </div>
+
+          <div class="pt-2 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+            <button onclick="openSaveWeekAsTemplateModal('${athleteId}', '${sourceMondayISO}')" class="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-bold">
+              💾 Sauvegarder comme Bloc Type
+            </button>
+            <button onclick="executeDuplicateWeek('${athleteId}', '${sourceMondayISO}')" class="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold text-xs shadow">
+              ✅ Dupliquer maintenant
+            </button>
+          </div>
+        `}
+      </div>
+    `);
+  }
+
+  function executeDuplicateWeek(athleteId, sourceMondayISO) {
+    const ath = state.athletes.find(a => a.id === athleteId);
+    if (!ath) return;
+    const rawTarget = document.getElementById('dup-target-date')?.value;
+    const repeatCount = Math.max(1, Math.min(4, parseInt(document.getElementById('dup-repeat-count')?.value || '1', 10)));
+    const replaceExisting = !!document.getElementById('dup-replace-existing')?.checked;
+    if (!rawTarget) return;
+
+    const targetMondayBase = formatDateISO(getMonday(rawTarget));
+    const sourceWeekDates = Array.from({ length: 7 }, (_, i) => addDays(sourceMondayISO, i));
+    const sourcePlans = ath.plans.filter(p => sourceWeekDates.includes(p.date));
+    if (sourcePlans.length === 0) return;
+
+    let copiedTotal = 0;
+    for (let w = 0; w < repeatCount; w++) {
+      const targetMonday = addDays(targetMondayBase, w * 7);
+      if (targetMonday === sourceMondayISO) continue;
+      const targetWeekDates = Array.from({ length: 7 }, (_, i) => addDays(targetMonday, i));
+      if (replaceExisting) {
+        ath.plans = ath.plans.filter(p => !targetWeekDates.includes(p.date));
+      }
+      sourcePlans.forEach((sp, idx) => {
+        const dayOffset = Math.round((new Date(sp.date + 'T12:00:00') - new Date(sourceMondayISO + 'T12:00:00')) / 86400000);
+        const newDate = addDays(targetMonday, dayOffset);
+        ath.plans.push({
+          id: `dup_${Date.now()}_${w}_${idx}_${Math.random().toString(36).slice(2, 5)}`,
+          date: newDate,
+          courseId: sp.courseId,
+          renfoId: sp.renfoId,
+          echauffementId: sp.echauffementId,
+          recupId: sp.recupId,
+          trailMetaOverride: sp.trailMetaOverride ? JSON.parse(JSON.stringify(sp.trailMetaOverride)) : null,
+          completed: false,
+          reaction: '',
+          rpe: null,
+          athleteNote: '',
+          coachComment: '',
+          coachLiked: false,
+          gpxData: null
+        });
+        copiedTotal++;
+      });
+    }
+
+    pushAthleteNotification(athleteId, {
+      icon: '📅',
+      title: `Nouveau bloc planifié (${copiedTotal} séance(s))`,
+      message: `Le coach a programmé ${repeatCount} semaine(s) d'entraînement à partir du ${formatDateFR(targetMondayBase)}.`,
+      dateISO: targetMondayBase
+    });
+
+    ui.currentDate = targetMondayBase;
+    saveState();
+    closeModal();
+    render();
+    showToast(`📋 ${copiedTotal} séance(s) dupliquée(s) vers la semaine du ${formatDateFR(targetMondayBase)} !`);
+  }
+
+  function openSaveWeekAsTemplateModal(athleteId, mondayISO) {
+    const ath = state.athletes.find(a => a.id === athleteId);
+    const weekDates = Array.from({ length: 7 }, (_, i) => addDays(mondayISO, i));
+    const sourcePlans = ath.plans.filter(p => weekDates.includes(p.date));
+
+    openModal(`
+      <div class="space-y-4">
+        <h3 class="text-lg font-extrabold">🧱 Enregistrer comme Bloc Type réutilisable</h3>
+        <p class="text-xs text-slate-400">Cette semaine (${sourcePlans.length} séance(s)) pourra être appliquée en 1 clic à n'importe quel athlète.</p>
+        <div class="space-y-3">
+          <div>
+            <label class="text-xs text-slate-400">Nom du bloc type *</label>
+            <input id="tpl-name" type="text" placeholder="Ex: Bloc D+ Montagne 4 séances" class="w-full mt-1 bg-slate-800 rounded-xl px-3 py-2 text-xs font-bold" />
+          </div>
+          <div>
+            <label class="text-xs text-slate-400">Catégorie</label>
+            <select id="tpl-cat" class="w-full mt-1 bg-slate-800 rounded-xl px-3 py-2 text-xs font-bold">
+              <option value="Foncier">Foncier Trail</option>
+              <option value="Choc Ultra">Week-End Choc / Ultra</option>
+              <option value="Affûtage">Affûtage / Pré-course</option>
+              <option value="Dénivelé">Spécifique Dénivelé / Côtes</option>
+              <option value="Régénération">Régénération / Récupération</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-slate-400">Description</label>
+            <input id="tpl-desc" type="text" placeholder="Ex: Travail en côte + sortie longue rando-course" class="w-full mt-1 bg-slate-800 rounded-xl px-3 py-2 text-xs" />
+          </div>
+        </div>
+        <button onclick="saveWeekAsTemplate('${athleteId}', '${mondayISO}')" class="w-full py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-extrabold text-sm">Enregistrer le Bloc Type</button>
+      </div>
+    `);
+  }
+
+  function saveWeekAsTemplate(athleteId, mondayISO) {
+    const ath = state.athletes.find(a => a.id === athleteId);
+    const name = (document.getElementById('tpl-name')?.value || '').trim();
+    const category = document.getElementById('tpl-cat')?.value || 'Foncier';
+    const description = (document.getElementById('tpl-desc')?.value || '').trim() || 'Bloc hebdomadaire personnalisé';
+    if (!name) return showToast('❌ Saisissez un nom pour le bloc type');
+
+    const weekDates = Array.from({ length: 7 }, (_, i) => addDays(mondayISO, i));
+    const sourcePlans = ath.plans.filter(p => weekDates.includes(p.date));
+    const items = sourcePlans.map(sp => ({
+      dayOffset: Math.round((new Date(sp.date + 'T12:00:00') - new Date(mondayISO + 'T12:00:00')) / 86400000),
+      courseId: sp.courseId,
+      renfoId: sp.renfoId,
+      echauffementId: sp.echauffementId,
+      recupId: sp.recupId,
+      trailMetaOverride: sp.trailMetaOverride || null
+    }));
+
+    state.weekTemplates = state.weekTemplates || [];
+    state.weekTemplates.unshift({
+      id: 'tpl_' + Date.now(),
+      name,
+      category,
+      description,
+      items
+    });
+    saveState();
+    openWeekTemplatesModal(athleteId, mondayISO);
+    showToast(`🧱 Bloc type « ${name} » enregistré !`);
+  }
+
+  function openWeekTemplatesModal(athleteId, mondayISO) {
+    const ath = state.athletes.find(a => a.id === athleteId);
+    const templates = state.weekTemplates || [];
+    const dayNames = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+    openModal(`
+      <div class="space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 pr-8">
+          <div>
+            <h3 class="text-lg font-extrabold">🧱 Bibliothèque de Blocs Types Trail & Ultra</h3>
+            <p class="text-xs text-slate-400">Appliquer un cycle type sur la semaine du ${formatDateFR(mondayISO)} pour <strong>${ath.name}</strong></p>
+          </div>
+          <button onclick="openSaveWeekAsTemplateModal('${athleteId}', '${mondayISO}')" class="px-3 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold">
+            + Créer depuis cette semaine
+          </button>
+        </div>
+
+        <label class="flex items-center gap-2 text-xs bg-slate-950 p-2.5 rounded-xl border border-slate-800 cursor-pointer">
+          <input id="tpl-replace-week" type="checkbox" checked class="accent-emerald-500 w-4 h-4" />
+          <span>Remplacer les séances existantes de la semaine du ${formatDateFR(mondayISO)}</span>
+        </label>
+
+        <div class="space-y-2.5 max-h-[52vh] overflow-y-auto scrollbar-thin pr-1">
+          ${templates.map(tpl => `
+            <div class="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="font-extrabold text-sm text-emerald-400">${tpl.name}</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold">${tpl.category}</span>
+                  </div>
+                  <p class="text-xs text-slate-400 mt-0.5">${tpl.description}</p>
+                </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <button onclick="applyWeekTemplate('${athleteId}', '${mondayISO}', '${tpl.id}')" class="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold text-xs">
+                    Appliquer
+                  </button>
+                  ${!tpl.id.startsWith('tpl_foncier') && !tpl.id.startsWith('tpl_weekend') && !tpl.id.startsWith('tpl_affutage') ? `
+                    <button onclick="deleteWeekTemplate('${athleteId}', '${mondayISO}', '${tpl.id}')" class="px-2 py-1.5 rounded-xl bg-slate-800 text-rose-400 text-xs">🗑️</button>
+                  ` : ''}
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-1.5 pt-1">
+                ${(tpl.items || []).map(it => {
+                  const c = state.catalogCourse.find(x => x.id === it.courseId);
+                  return `<span class="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300"><strong>${dayNames[it.dayOffset] || 'J'}:</strong> ${c ? c.nom : 'Séance'}</span>`;
+                }).join('')}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `);
+  }
+
+  function applyWeekTemplate(athleteId, mondayISO, templateId) {
+    const ath = state.athletes.find(a => a.id === athleteId);
+    const tpl = (state.weekTemplates || []).find(t => t.id === templateId);
+    if (!ath || !tpl) return;
+
+    const replace = !!document.getElementById('tpl-replace-week')?.checked;
+    const weekDates = Array.from({ length: 7 }, (_, i) => addDays(mondayISO, i));
+    if (replace) {
+      ath.plans = ath.plans.filter(p => !weekDates.includes(p.date));
+    }
+
+    (tpl.items || []).forEach((it, idx) => {
+      const targetDate = addDays(mondayISO, it.dayOffset || 0);
+      ath.plans.push({
+        id: `tpl_plan_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 5)}`,
+        date: targetDate,
+        courseId: it.courseId,
+        renfoId: it.renfoId || 'r0',
+        echauffementId: it.echauffementId || 't0',
+        recupId: it.recupId || 't0',
+        trailMetaOverride: it.trailMetaOverride || null,
+        completed: false,
+        reaction: '',
+        rpe: null,
+        athleteNote: '',
+        coachComment: '',
+        coachLiked: false,
+        gpxData: null
+      });
+    });
+
+    pushAthleteNotification(athleteId, {
+      icon: '🧱',
+      title: `Bloc « ${tpl.name} » planifié`,
+      message: `Le coach a appliqué le bloc ${tpl.name} sur ta semaine du ${formatDateFR(mondayISO)}.`,
+      dateISO: mondayISO
+    });
+
+    saveState();
+    closeModal();
+    render();
+    showToast(`🧱 Bloc « ${tpl.name} » appliqué sur la semaine !`);
+  }
+
+  function deleteWeekTemplate(athleteId, mondayISO, templateId) {
+    state.weekTemplates = (state.weekTemplates || []).filter(t => t.id !== templateId);
+    saveState();
+    openWeekTemplatesModal(athleteId, mondayISO);
+  }
+
   function adaptWeekCycleFatigue(athleteId, mondayISO) {
     const ath = state.athletes.find(a => a.id === athleteId);
     if (!ath) return;
@@ -3625,16 +4058,35 @@
     showToast(`⚡ VMA mise à jour à ${val} km/h`);
   }
 
+  function onPlanCourseChange(selectedCourseId) {
+    const c = state.catalogCourse.find(x => x.id === selectedCourseId);
+    const tMeta = getTrailSessionMeta(c, null);
+    const box = document.getElementById('plan-trail-meta-box');
+    if (!box) return;
+    if (tMeta) {
+      document.getElementById('plan-mountain-mode').checked = true;
+      document.getElementById('plan-effort-up').value = tMeta.effortUp;
+      document.getElementById('plan-walk-slope').value = tMeta.walkSlope;
+      document.getElementById('plan-downhill').value = tMeta.downhillStrategy;
+      document.getElementById('plan-fueling').value = tMeta.fuelingWindow;
+    } else {
+      document.getElementById('plan-mountain-mode').checked = false;
+    }
+  }
+
   function openPlanSessionModal(athleteId, dateISO, planId = null) {
     const ath = state.athletes.find(a => a.id === athleteId);
     const existing = planId ? ath.plans.find(p => p.id === planId) : null;
+    const initCourse = state.catalogCourse.find(c => c.id === (existing?.courseId || state.catalogCourse[0]?.id));
+    const initMeta = getTrailSessionMeta(initCourse, existing);
+
     openModal(`
       <div class="space-y-4">
         <h3 class="text-lg font-extrabold">${existing ? 'Modifier la séance' : 'Planifier une séance'} — ${formatDateFR(dateISO)}</h3>
         <div class="space-y-3">
           <div>
             <label class="text-xs text-slate-400">Séance Course / Trail</label>
-            <select id="plan-course" class="w-full mt-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-3 py-2 text-xs font-semibold">
+            <select id="plan-course" onchange="onPlanCourseChange(this.value)" class="w-full mt-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-3 py-2 text-xs font-semibold">
               ${state.catalogCourse.map(c => `<option value="${c.id}" ${existing?.courseId === c.id ? 'selected' : ''}>${c.nom} (${c.duree} min${c.dplus ? ' • ' + c.dplus + 'm D+' : ''})</option>`).join('')}
             </select>
           </div>
@@ -3658,6 +4110,34 @@
               ${state.catalogRenfo.map(r => `<option value="${r.id}" ${existing?.renfoId === r.id ? 'selected' : ''}>${r.nom} (${r.duree} min)</option>`).join('')}
             </select>
           </div>
+
+          <div id="plan-trail-meta-box" class="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-extrabold text-amber-400">⛰️ Repères Montagne, Rando-Course & Ravito</span>
+              <label class="flex items-center gap-1.5 text-xs font-bold cursor-pointer">
+                <input id="plan-mountain-mode" type="checkbox" ${initMeta ? 'checked' : ''} class="accent-amber-500 w-4 h-4" />
+                <span>Activer l'aide-mémoire terrain</span>
+              </label>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label class="text-[11px] text-slate-400">Effort en côte</label>
+                <input id="plan-effort-up" type="text" value="${initMeta?.effortUp || ''}" placeholder="Ex: RPE 4-5/10, aisance respiratoire" class="w-full mt-0.5 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs" />
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400">Seuil de marche active / Rando-course</label>
+                <input id="plan-walk-slope" type="text" value="${initMeta?.walkSlope || ''}" placeholder="Ex: Marche active dès 10% de pente" class="w-full mt-0.5 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs" />
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400">Stratégie en descente</label>
+                <input id="plan-downhill" type="text" value="${initMeta?.downhillStrategy || ''}" placeholder="Ex: Foulée souple, cadence rapide" class="w-full mt-0.5 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs" />
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400">Fenêtre Hydratation & Nutrition</label>
+                <input id="plan-fueling" type="text" value="${initMeta?.fuelingWindow || ''}" placeholder="Ex: Ravito toutes les 45-60 min" class="w-full mt-0.5 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs" />
+              </div>
+            </div>
+          </div>
         </div>
         <button onclick="savePlannedSession('${athleteId}', '${dateISO}', '${planId || ''}')" class="w-full py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-bold text-sm">Enregistrer & Notifier l'athlète</button>
       </div>
@@ -3666,11 +4146,21 @@
 
   function savePlannedSession(athleteId, dateISO, planId) {
     const ath = state.athletes.find(a => a.id === athleteId);
+    const mountainActive = !!document.getElementById('plan-mountain-mode')?.checked;
+    const trailMetaOverride = mountainActive ? {
+      isMountainMode: true,
+      effortUp: (document.getElementById('plan-effort-up')?.value || '').trim(),
+      walkSlope: (document.getElementById('plan-walk-slope')?.value || '').trim(),
+      downhillStrategy: (document.getElementById('plan-downhill')?.value || '').trim(),
+      fuelingWindow: (document.getElementById('plan-fueling')?.value || '').trim()
+    } : { isMountainMode: false };
+
     const data = {
       courseId: document.getElementById('plan-course').value,
       echauffementId: document.getElementById('plan-t1').value,
       recupId: document.getElementById('plan-t2').value,
-      renfoId: document.getElementById('plan-renfo').value
+      renfoId: document.getElementById('plan-renfo').value,
+      trailMetaOverride
     };
     const courseObj = state.catalogCourse.find(c => c.id === data.courseId);
     const renfoObj = state.catalogRenfo.find(r => r.id === data.renfoId);
@@ -4144,6 +4634,7 @@
 
   function openCourseCatalogModal(id = null) {
     const item = id ? state.catalogCourse.find(c => c.id === id) : null;
+    const tMeta = item ? getTrailSessionMeta(item, null) : null;
     openModal(`
       <div class="space-y-3">
         <h3 class="text-lg font-extrabold">${item ? 'Modifier la séance' : 'Nouvelle séance Course/Trail'}</h3>
@@ -4154,12 +4645,28 @@
           <div><label class="text-[11px] text-slate-400">D+ (m)</label><input id="cc-dp" type="number" value="${item?.dplus ?? 0}" class="w-full bg-slate-800 rounded-xl px-3 py-1.5 text-xs" /></div>
           <div><label class="text-[11px] text-slate-400">Facteur VMA</label><input id="cc-vma" type="number" step="0.01" value="${item?.facteurVMA ?? 0.70}" class="w-full bg-slate-800 rounded-xl px-3 py-1.5 text-xs" /></div>
         </div>
+        <div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-extrabold text-amber-400">⛰️ Repères Montagne / Rando-Course / Ravito</span>
+            <label class="flex items-center gap-1.5 text-xs font-bold">
+              <input id="cc-mountain-mode" type="checkbox" ${tMeta ? 'checked' : ''} class="accent-amber-500" />
+              <span>Actif</span>
+            </label>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input id="cc-effort-up" type="text" value="${tMeta?.effortUp || ''}" placeholder="Effort en côte (ex: RPE 4-5/10)" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs" />
+            <input id="cc-walk-slope" type="text" value="${tMeta?.walkSlope || ''}" placeholder="Seuil marche active (ex: pente > 10%)" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs" />
+            <input id="cc-downhill" type="text" value="${tMeta?.downhillStrategy || ''}" placeholder="Stratégie descente" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs" />
+            <input id="cc-fueling" type="text" value="${tMeta?.fuelingWindow || ''}" placeholder="Fenêtre hydratation / ravito" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs" />
+          </div>
+        </div>
         <button onclick="saveCourseCatalogItem('${id || ''}')" class="w-full py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-bold text-sm">Enregistrer</button>
       </div>
     `);
   }
 
   function saveCourseCatalogItem(id) {
+    const isMountain = !!document.getElementById('cc-mountain-mode')?.checked;
     const obj = {
       type: 'Course',
       nom: document.getElementById('cc-nom').value.trim(),
@@ -4167,7 +4674,14 @@
       duree: parseInt(document.getElementById('cc-dur').value, 10) || 0,
       dplus: parseInt(document.getElementById('cc-dp').value, 10) || 0,
       facteurVMA: parseFloat(document.getElementById('cc-vma').value) || 0,
-      recuperation: 'Selon consignes'
+      recuperation: 'Selon consignes',
+      trailMeta: isMountain ? {
+        isMountainMode: true,
+        effortUp: (document.getElementById('cc-effort-up')?.value || '').trim(),
+        walkSlope: (document.getElementById('cc-walk-slope')?.value || '').trim(),
+        downhillStrategy: (document.getElementById('cc-downhill')?.value || '').trim(),
+        fuelingWindow: (document.getElementById('cc-fueling')?.value || '').trim()
+      } : { isMountainMode: false }
     };
     if (!obj.nom) return;
     if (id) Object.assign(state.catalogCourse.find(c => c.id === id), obj);
