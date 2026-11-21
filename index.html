@@ -826,8 +826,7 @@
         branch: 'main',
         filePath: 'index.html',
         token: '',
-        netlifySiteUrl: '',
-        netlifyBuildHook: '',
+        githubPagesUrl: '',
         autoCheckEnabled: true,
         checkIntervalSec: 45
       },
@@ -910,8 +909,7 @@
         branch: 'main',
         filePath: 'index.html',
         token: '',
-        netlifySiteUrl: '',
-        netlifyBuildHook: '',
+        githubPagesUrl: '',
         autoCheckEnabled: true,
         checkIntervalSec: 45
       };
@@ -1259,8 +1257,10 @@
     const branch = (document.getElementById('gh-branch')?.value || 'main').trim() || 'main';
     const filePath = (document.getElementById('gh-filepath')?.value || 'index.html').trim() || 'index.html';
     const token = (document.getElementById('gh-token')?.value || '').trim();
-    const netlifySiteUrl = (document.getElementById('netlify-site-url')?.value || '').trim().replace(/\/$/, '');
-    const netlifyBuildHook = (document.getElementById('netlify-build-hook')?.value || '').trim();
+    let githubPagesUrl = (document.getElementById('gh-pages-url')?.value || '').trim();
+    if (!githubPagesUrl && owner && repo) {
+      githubPagesUrl = repo.toLowerCase() === `${owner.toLowerCase()}.github.io` ? `https://${owner}.github.io/` : `https://${owner}.github.io/${repo}/`;
+    }
     const autoCheckEnabled = !!document.getElementById('netlify-autocheck')?.checked;
     const checkIntervalSec = Math.max(15, parseInt(document.getElementById('netlify-interval')?.value || '45', 10) || 45);
 
@@ -1276,8 +1276,7 @@
       branch,
       filePath,
       token: '', // Ne jamais exposer le PAT en clair dans le state partagé Firebase
-      netlifySiteUrl,
-      netlifyBuildHook,
+      githubPagesUrl,
       autoCheckEnabled,
       checkIntervalSec
     };
@@ -1285,7 +1284,7 @@
     saveState();
     startAutoUpdateWatcher();
     render();
-    showToast('✅ Configuration GitHub & Netlify enregistrée');
+    showToast('✅ Configuration GitHub & GitHub Pages enregistrée');
   }
 
   async function testGithubConnection() {
@@ -1373,9 +1372,8 @@
     const branch = (document.getElementById('gh-branch')?.value || state.githubDeployConfig?.branch || 'main').trim() || 'main';
     const filePath = (document.getElementById('gh-filepath')?.value || state.githubDeployConfig?.filePath || 'index.html').trim() || 'index.html';
     const token = (document.getElementById('gh-token')?.value || getGithubToken()).trim();
-    const netlifyHook = (document.getElementById('netlify-build-hook')?.value || state.githubDeployConfig?.netlifyBuildHook || '').trim();
     const version = (document.getElementById('ota-version-input')?.value || state.appVersion || 'v2.5.0').trim();
-    const notes = (document.getElementById('ota-notes-input')?.value || '').trim() || `Déploiement ${version} via Git + Netlify`;
+    const notes = (document.getElementById('ota-notes-input')?.value || '').trim() || `Déploiement ${version} sur GitHub Pages`;
 
     let rawHtml = (document.getElementById('ota-code-textarea')?.value || '').trim();
     if (!rawHtml && useCurrentIfEmpty) {
@@ -1455,19 +1453,9 @@
       const commitResult = await putRes.json();
       const newCommitSha = (commitResult.commit?.sha || '').slice(0, 7);
 
-      // 3. Déclencher le Build Hook Netlify optionnel si renseigné
-      let netlifyMsg = 'Déploiement continu Git → Netlify déclenché automatiquement.';
-      if (netlifyHook) {
-        if (statusEl) {
-          statusEl.innerHTML = `<span class="text-amber-400">⏳ 3/3 Déclenchement du Build Hook Netlify...</span>`;
-        }
-        try {
-          await fetch(netlifyHook, { method: 'POST', mode: 'no-cors' });
-          netlifyMsg = 'Build Hook Netlify déclenché avec succès !';
-        } catch (hookErr) {
-          netlifyMsg = 'Push GitHub OK (Build Hook Netlify ignoré par CORS).';
-        }
-      }
+      // 3. Propagation GitHub Pages automatique
+      const ghPagesUrl = getResolvedGithubPagesBaseUrl();
+      const ghPagesMsg = `Déploiement automatique GitHub Pages actif (${ghPagesUrl}).`;
 
       // 4. Mettre à jour l'état global & diffuser le signal de propagation sur tous les appareils connectés
       localStorage.setItem(LAST_REMOTE_BUILD_KEY, `${version}|${buildId}`);
@@ -1481,15 +1469,15 @@
         publishedAt: new Date().toISOString()
       };
 
-      broadcastSystemUpdateNotifications(version, `${notes} (Commit GitHub #${newCommitSha} • Propagation Netlify active)`);
+      broadcastSystemUpdateNotifications(version, `${notes} (Commit GitHub #${newCommitSha} • Propagation GitHub Pages active)`);
       await saveState(true);
 
       if (statusEl) {
-        statusEl.innerHTML = `<span class="text-emerald-400">✅ Publié sur GitHub (commit <code>#${newCommitSha}</code>) • ${netlifyMsg}</span>`;
+        statusEl.innerHTML = `<span class="text-emerald-400">✅ Publié sur GitHub (commit <code>#${newCommitSha}</code>) • ${ghPagesMsg}</span>`;
       }
 
       render();
-      showToast(`🚀 ${version} publié sur GitHub & propagé vers Netlify !`);
+      showToast(`🚀 ${version} publié sur GitHub & propagé sur GitHub Pages !`);
     } catch (err) {
       if (statusEl) {
         statusEl.innerHTML = `<span class="text-rose-400">❌ Échec publication GitHub : ${err.message}</span>`;
@@ -1498,12 +1486,12 @@
     }
   }
 
-  // Surveillance automatique sur tous les appareils (Coach & Athlètes) de la version hébergée sur Netlify / Git
+  // Surveillance automatique sur tous les appareils (Coach & Athlètes) de la version hébergée sur GitHub Pages
   async function checkForRemoteNetlifyUpdate(manualTrigger = false) {
     try {
-      const baseUrl = (state.githubDeployConfig?.netlifySiteUrl || window.location.origin + window.location.pathname).split('#')[0].split('?')[0];
+      const baseUrl = getResolvedGithubPagesBaseUrl();
       if (!baseUrl.startsWith('http')) {
-        if (manualTrigger) showToast('ℹ️ Surveillance active dès que le site est hébergé sur Netlify (HTTPS).');
+        if (manualTrigger) showToast('ℹ️ Surveillance active dès que le site est hébergé sur GitHub Pages (HTTPS).');
         return;
       }
 
@@ -1527,7 +1515,7 @@
       if (remoteVer && (remoteVer !== localVer || (remoteBuild && remoteBuild !== localBuild)) && remoteSig !== lastAppliedSig) {
         localStorage.setItem(LAST_REMOTE_BUILD_KEY, remoteSig);
         localStorage.removeItem(OTA_STORAGE_KEY);
-        showToast(`🚀 Nouvelle version ${remoteVer} détectée sur Netlify ! Mise à jour de l'appareil...`);
+        showToast(`🚀 Nouvelle version ${remoteVer} détectée sur GitHub Pages ! Mise à jour de l'appareil...`);
         setTimeout(() => {
           window.location.replace(`${baseUrl}?v=${encodeURIComponent(remoteVer)}_${Date.now()}`);
         }, 1200);
@@ -1535,7 +1523,7 @@
         showToast(`✅ Votre appareil est déjà à jour (${localVer})`);
       }
     } catch (e) {
-      if (manualTrigger) showToast('⚠️ Impossible de joindre le serveur Netlify pour le moment.');
+      if (manualTrigger) showToast('⚠️ Impossible de joindre le serveur GitHub Pages pour le moment.');
     }
   }
 
@@ -1727,29 +1715,82 @@
     `);
   }
 
+  function decodeMagicPayload(encodedParam) {
+    let b64 = decodeURIComponent(encodedParam || '').trim();
+    // Conversion Base64 URL-safe (- et _) vers Base64 standard (+ et /)
+    b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4 !== 0) b64 += '=';
+    const jsonStr = decodeURIComponent(escape(atob(b64)));
+    return JSON.parse(jsonStr);
+  }
+
   function checkMagicLink() {
-    const hash = window.location.hash;
-    if (hash && hash.startsWith('#magic=')) {
+    const hash = window.location.hash || '';
+    const searchParams = new URLSearchParams(window.location.search || '');
+    const rawMagic = hash.startsWith('#magic=')
+      ? hash.slice(7)
+      : (searchParams.get('magic') || '');
+
+    if (rawMagic) {
       try {
-        const encoded = hash.slice(7);
-        const jsonStr = decodeURIComponent(escape(atob(encoded)));
-        const payload = JSON.parse(jsonStr);
+        const payload = decodeMagicPayload(rawMagic);
         if (payload && payload.athlete) {
-          if (payload.catalogCourse) state.catalogCourse = payload.catalogCourse;
-          if (payload.catalogRenfo) state.catalogRenfo = payload.catalogRenfo;
+          if (payload.catalogCourse && Array.isArray(payload.catalogCourse)) {
+            payload.catalogCourse.forEach(c => {
+              const cIdx = state.catalogCourse.findIndex(x => x.id === c.id);
+              if (cIdx >= 0) state.catalogCourse[cIdx] = c;
+              else state.catalogCourse.push(c);
+            });
+          }
+          if (payload.catalogRenfo && Array.isArray(payload.catalogRenfo)) {
+            payload.catalogRenfo.forEach(r => {
+              const rIdx = state.catalogRenfo.findIndex(x => x.id === r.id);
+              if (rIdx >= 0) state.catalogRenfo[rIdx] = r;
+              else state.catalogRenfo.push(r);
+            });
+          }
           if (payload.catalogTemps) state.catalogTemps = payload.catalogTemps;
           ensureDataIntegrity(state);
           const idx = state.athletes.findIndex(a => a.id === payload.athlete.id);
           if (idx >= 0) state.athletes[idx] = payload.athlete;
           else state.athletes.push(payload.athlete);
           localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+          // Nettoyer le hash après import pour éviter un rechargement parasite sur GitHub Pages
+          if (window.history && window.history.replaceState) {
+            window.history.replaceState(null, '', window.location.pathname);
+          }
+
           enterAthleteSpace(payload.athlete.id);
           showToast(`✨ Planning de ${payload.athlete.name} chargé via Lien Magique !`);
         }
       } catch (e) {
         console.error('Lien magique invalide', e);
+        showToast('❌ Lien magique invalide ou corrompu');
       }
     }
+  }
+
+  function getResolvedGithubPagesBaseUrl() {
+    const cfg = state.githubDeployConfig || {};
+    let configured = (cfg.githubPagesUrl || cfg.netlifySiteUrl || '').trim();
+    if (!configured && cfg.owner && cfg.repo) {
+      const repoClean = cfg.repo.trim();
+      const ownerClean = cfg.owner.trim();
+      if (repoClean.toLowerCase() === `${ownerClean.toLowerCase()}.github.io`) {
+        configured = `https://${ownerClean}.github.io/`;
+      } else {
+        configured = `https://${ownerClean}.github.io/${repoClean}/`;
+      }
+    }
+    if (configured && !configured.includes('netlify.app')) {
+      return configured.split('#')[0].split('?')[0];
+    }
+    const current = window.location.href.split('#')[0].split('?')[0];
+    if (current.startsWith('http') && !current.includes('netlify.app')) {
+      return current;
+    }
+    return configured ? configured.split('#')[0].split('?')[0] : current;
   }
 
   function generateMagicLink(athleteId) {
@@ -1763,9 +1804,11 @@
       catalogRenfo: state.catalogRenfo.filter(r => usedRenfoIds.has(r.id)),
       catalogTemps: state.catalogTemps
     };
-    const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-    const baseUrl = window.location.href.split('#')[0];
-    return `${baseUrl}#magic=${b64}`;
+    // Encodage Base64 URL-safe compatible avec les sous-dossiers GitHub Pages (/repo/)
+    const rawB64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+    const urlSafeB64 = rawB64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const baseUrl = getResolvedGithubPagesBaseUrl();
+    return `${baseUrl}#magic=${urlSafeB64}`;
   }
 
   function showToast(msg) {
@@ -2915,16 +2958,16 @@
           </span>
         </div>
 
-        <!-- SECTION 1 : PUBLICATION DIRECTE VIA L'API GITHUB & PROPAGATION NETLIFY -->
+        <!-- SECTION 1 : PUBLICATION DIRECTE VIA L'API GITHUB & GITHUB PAGES (LIENS MAGIQUES) -->
         <div class="bg-white dark:bg-slate-900 border-2 border-sky-500/40 rounded-2xl p-5 space-y-5 shadow-lg">
           <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
             <div class="space-y-1">
               <div class="flex items-center gap-2">
                 <span class="text-xl">🐙</span>
-                <h3 class="font-black text-base sm:text-lg">Publication directe GitHub API & Propagation Netlify</h3>
+                <h3 class="font-black text-base sm:text-lg">Hébergement GitHub Pages & Liens Magiques</h3>
               </div>
               <p class="text-xs text-slate-500 dark:text-slate-400">
-                Poussez directement la nouvelle version de <code>index.html</code> sur votre dépôt GitHub. Netlify déploie automatiquement le site et tous les appareils (Coach & Athlètes) reçoivent la mise à jour sans manipulation.
+                Configurez votre dépôt GitHub et l'URL publique GitHub Pages. Tous les <strong>Liens Magiques Athlètes</strong> et mises à jour OTA pointeront automatiquement vers votre domaine <code>github.io</code>.
               </p>
             </div>
             <div class="flex flex-wrap items-center gap-2">
@@ -2947,7 +2990,7 @@
               <input id="gh-repo" type="text" value="${state.githubDeployConfig?.repo || ''}" placeholder="Ex: trailrun-coach" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold" />
             </div>
             <div>
-              <label class="text-xs font-bold text-slate-400 block mb-1">Branche cible</label>
+              <label class="text-xs font-bold text-slate-400 block mb-1">Branche GitHub Pages</label>
               <input id="gh-branch" type="text" value="${state.githubDeployConfig?.branch || 'main'}" placeholder="main" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold" />
             </div>
             <div>
@@ -2963,47 +3006,41 @@
               <span class="text-[10px] text-slate-400">Stocké uniquement dans le navigateur sécurisé du Coach (jamais partagé aux athlètes).</span>
             </div>
             <div>
-              <label class="text-xs font-bold text-slate-400 block mb-1">URL publique Netlify (pour détection auto multi-appareils)</label>
-              <input id="netlify-site-url" type="url" value="${state.githubDeployConfig?.netlifySiteUrl || (window.location.origin.startsWith('http') ? window.location.origin : '')}" placeholder="https://trailrun-coach.netlify.app" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs" />
-              <span class="text-[10px] text-slate-400">Permet à chaque appareil de détecter automatiquement les nouveaux déploiements Netlify.</span>
+              <label class="text-xs font-bold text-slate-400 block mb-1">URL publique GitHub Pages (base des Liens Magiques) *</label>
+              <input id="gh-pages-url" type="url" value="${getResolvedGithubPagesBaseUrl()}" placeholder="https://votre-pseudo.github.io/trailrun-coach/" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold" />
+              <span class="text-[10px] text-emerald-400">🔗 Base utilisée : <code>${getResolvedGithubPagesBaseUrl()}#magic=...</code></span>
             </div>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
-            <div>
-              <label class="text-xs font-bold text-slate-400 block mb-1">Netlify Build Hook URL (optionnel)</label>
-              <input id="netlify-build-hook" type="url" value="${state.githubDeployConfig?.netlifyBuildHook || ''}" placeholder="https://api.netlify.com/build_hooks/..." class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs" />
-            </div>
-            <div class="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-              <label class="flex items-center gap-2 text-xs font-bold cursor-pointer">
-                <input id="netlify-autocheck" type="checkbox" ${state.githubDeployConfig?.autoCheckEnabled !== false ? 'checked' : ''} class="w-4 h-4 accent-emerald-500" />
-                <span>Propagation auto sur tous les appareils</span>
-              </label>
-              <div class="flex items-center gap-1 text-xs">
-                <span class="text-slate-400">Toutes les</span>
-                <input id="netlify-interval" type="number" min="15" max="600" value="${state.githubDeployConfig?.checkIntervalSec || 45}" class="w-14 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1 text-center font-bold" />
-                <span class="text-slate-400">sec</span>
-              </div>
+          <div class="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+            <label class="flex items-center gap-2 text-xs font-bold cursor-pointer">
+              <input id="netlify-autocheck" type="checkbox" ${state.githubDeployConfig?.autoCheckEnabled !== false ? 'checked' : ''} class="w-4 h-4 accent-emerald-500" />
+              <span>Détection automatique des mises à jour GitHub Pages sur tous les appareils</span>
+            </label>
+            <div class="flex items-center gap-1 text-xs">
+              <span class="text-slate-400">Toutes les</span>
+              <input id="netlify-interval" type="number" min="15" max="600" value="${state.githubDeployConfig?.checkIntervalSec || 45}" class="w-14 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1 text-center font-bold" />
+              <span class="text-slate-400">sec</span>
             </div>
           </div>
 
           <div id="gh-api-status" class="text-xs font-semibold">
             ${state.lastPublishedRelease
-              ? `<span class="text-emerald-400">✅ Dernière publication GitHub : <strong>${state.lastPublishedRelease.version}</strong> (commit <code>#${state.lastPublishedRelease.commitSha}</code> sur <code>${state.lastPublishedRelease.repo}</code> le ${new Date(state.lastPublishedRelease.publishedAt).toLocaleString('fr-FR')})</span>`
-              : `<span class="text-slate-400">ℹ️ Configurez votre dépôt GitHub ci-dessus pour publier en 1 clic vers Git + Netlify.</span>`
+              ? `<span class="text-emerald-400">✅ Dernière publication GitHub Pages : <strong>${state.lastPublishedRelease.version}</strong> (commit <code>#${state.lastPublishedRelease.commitSha}</code> sur <code>${state.lastPublishedRelease.repo}</code> le ${new Date(state.lastPublishedRelease.publishedAt).toLocaleString('fr-FR')})</span>`
+              : `<span class="text-slate-400">ℹ️ Renseignez votre compte GitHub ou l'URL GitHub Pages ci-dessus pour générer des Liens Magiques valides.</span>`
             }
           </div>
 
           <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
             <button onclick="saveGithubDeploySettings()" class="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-xs font-bold">
-              💾 Enregistrer la config Git & Netlify
+              💾 Enregistrer la config GitHub Pages
             </button>
             <div class="flex flex-wrap items-center gap-2">
               <button onclick="publishToGithubAndNetlify(true)" class="px-4 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-extrabold text-xs shadow">
-                📤 Pousser la version active vers GitHub + Netlify
+                📤 Pousser la version active vers GitHub Pages
               </button>
               <button onclick="publishToGithubAndNetlify(false)" class="px-4 py-2.5 rounded-xl text-slate-950 font-black text-xs shadow" style="background: var(--accent-color)">
-                🚀 Publier le nouveau index.html sur GitHub + Netlify
+                🚀 Publier le nouveau index.html sur GitHub Pages
               </button>
             </div>
           </div>
@@ -3018,7 +3055,7 @@
                 <h3 class="font-black text-base sm:text-lg">Source de mise à jour (index.html) & Test à chaud</h3>
               </div>
               <p class="text-xs text-slate-500 dark:text-slate-400">
-                Chargez votre fichier <code>index.html</code> ci-dessous pour le publier directement sur GitHub + Netlify (bouton bleu/vert ci-dessus) ou le tester immédiatement en local à chaud.
+                Chargez votre fichier <code>index.html</code> ci-dessous pour le publier directement sur GitHub Pages (bouton bleu/vert ci-dessus) ou le tester immédiatement en local à chaud.
               </p>
             </div>
             <div class="flex flex-wrap items-center gap-2">
@@ -3077,7 +3114,7 @@
                 ⚡ Tester à chaud en local
               </button>
               <button onclick="publishToGithubAndNetlify(false)" class="px-5 py-2.5 rounded-xl text-slate-950 font-black text-xs sm:text-sm shadow-lg transition hover:opacity-95" style="background: var(--accent-color)">
-                🚀 Publier via GitHub API & Propager sur Netlify
+                🚀 Publier via GitHub API & Propager sur GitHub Pages
               </button>
             </div>
           </div>
