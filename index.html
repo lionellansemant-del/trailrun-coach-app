@@ -708,6 +708,7 @@
       name: 'Camille Laurent',
       avatar: 'https://images.unsplash.com/photo-1594381898411-846e7d193883?auto=format&fit=crop&w=200&q=80',
       vma: 13.5,
+      pin: '',
       vmaHistory: [
         { date: addDays(monday, -35), vma: 13.0, note: 'Test Demi-Cooper initial (1300m)' },
         { date: addDays(monday, -7), vma: 13.5, note: 'Test VMA 6 min (1350m)' }
@@ -796,6 +797,7 @@
   let ui = {
     view: 'landing',
     coachUnlocked: false,
+    unlockedAthleteIds: [],
     coachTab: 'dashboard',
     selectedAthleteId: state.athletes[0]?.id || null,
     plannerMode: 'week',
@@ -837,6 +839,7 @@
     if (Array.isArray(targetState.athletes)) {
       targetState.athletes.forEach(ath => {
         if (!Array.isArray(ath.notifications)) ath.notifications = [];
+        if (typeof ath.pin !== 'string') ath.pin = ath.pin ? String(ath.pin) : '';
       });
     }
     if (targetState.catalogRenfo) {
@@ -2067,19 +2070,24 @@
               <div class="space-y-2.5 max-h-64 overflow-y-auto scrollbar-thin pr-1">
                 ${state.athletes.map(ath => {
                   const athNotifCount = (ath.notifications || []).length;
+                  const hasPin = !!(ath.pin && String(ath.pin).trim().length > 0);
+                  const isUnlocked = (ui.unlockedAthleteIds || []).includes(ath.id);
                   return `
-                    <button onclick="enterAthleteSpace('${ath.id}')" class="w-full flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 hover:bg-emerald-500/15 border border-slate-800 hover:border-emerald-500/50 transition text-left relative">
+                    <button onclick="handleAthleteCardClick('${ath.id}')" class="w-full flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 hover:bg-emerald-500/15 border border-slate-800 hover:border-emerald-500/50 transition text-left relative">
                       <div class="flex items-center gap-3">
                         <div class="relative">
                           <img src="${ath.avatar}" alt="${ath.name}" class="w-11 h-11 rounded-full object-cover border-2 border-emerald-500/60" />
                           ${athNotifCount > 0 ? `<span class="badge-pulse absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-red-500 text-white text-[10px] font-black flex items-center justify-center">${athNotifCount}</span>` : ''}
                         </div>
                         <div>
-                          <div class="font-bold text-white text-sm">${ath.name}</div>
+                          <div class="font-bold text-white text-sm flex items-center gap-1.5 flex-wrap">
+                            <span>${ath.name}</span>
+                            ${hasPin ? `<span class="text-[10px] px-2 py-0.5 rounded-full ${isUnlocked ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'} font-bold">${isUnlocked ? '🔓 Déverrouillé' : '🔐 PIN requis'}</span>` : ''}
+                          </div>
                           <div class="text-xs text-slate-400">VMA ${ath.vma} km/h • Objectif : ${ath.targetRace?.name || 'Aucun'}</div>
                         </div>
                       </div>
-                      <span class="text-xs font-bold text-emerald-400 px-2.5 py-1 rounded-lg bg-emerald-500/10">Ouvrir →</span>
+                      <span class="text-xs font-bold text-emerald-400 px-2.5 py-1 rounded-lg bg-emerald-500/10">${hasPin && !isUnlocked ? '🔒 Ouvrir' : 'Ouvrir →'}</span>
                     </button>
                   `;
                 }).join('')}
@@ -2122,6 +2130,54 @@
       enterCoachSpace();
     } else {
       showToast('❌ Code PIN incorrect');
+    }
+  }
+
+  function handleAthleteCardClick(athleteId) {
+    const ath = state.athletes.find(a => a.id === athleteId);
+    if (!ath) return;
+    const pin = String(ath.pin || '').trim();
+    const alreadyUnlocked = (ui.unlockedAthleteIds || []).includes(athleteId);
+    if (!pin || alreadyUnlocked) {
+      enterAthleteSpace(athleteId);
+      return;
+    }
+    promptAthletePin(athleteId);
+  }
+
+  function promptAthletePin(athleteId) {
+    const ath = state.athletes.find(a => a.id === athleteId);
+    if (!ath) return;
+    openModal(`
+      <div class="max-w-sm mx-auto text-center space-y-4 py-2">
+        <img src="${ath.avatar}" alt="${ath.name}" class="w-16 h-16 mx-auto rounded-full object-cover border-2 border-emerald-500 shadow" />
+        <div>
+          <span class="inline-block px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 text-[11px] font-bold uppercase tracking-wider mb-1">🔐 Profil Protégé</span>
+          <h3 class="text-xl font-extrabold">${ath.name}</h3>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400">Entrez votre code PIN personnel pour ouvrir votre espace athlète.</p>
+        <input id="ath-pin-input" type="password" inputmode="numeric" maxlength="8" placeholder="••••"
+          onkeydown="if(event.key==='Enter') verifyAthletePin('${ath.id}')"
+          class="w-full text-center text-2xl tracking-[0.5em] font-black py-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-emerald-500" />
+        <button onclick="verifyAthletePin('${ath.id}')" class="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold">Déverrouiller mon profil</button>
+      </div>
+    `);
+    setTimeout(() => document.getElementById('ath-pin-input')?.focus(), 50);
+  }
+
+  function verifyAthletePin(athleteId) {
+    const ath = state.athletes.find(a => a.id === athleteId);
+    if (!ath) return;
+    const val = (document.getElementById('ath-pin-input')?.value || '').trim();
+    if (val === String(ath.pin || '').trim()) {
+      ui.unlockedAthleteIds = ui.unlockedAthleteIds || [];
+      if (!ui.unlockedAthleteIds.includes(athleteId)) {
+        ui.unlockedAthleteIds.push(athleteId);
+      }
+      closeModal();
+      enterAthleteSpace(athleteId);
+    } else {
+      showToast('❌ Code PIN athlète incorrect');
     }
   }
 
@@ -2261,7 +2317,10 @@
                       <img src="${ath.avatar}" class="w-12 h-12 rounded-full object-cover border-2 border-emerald-500" />
                       <div>
                         <h3 class="font-extrabold text-base">${ath.name}</h3>
-                        <p class="text-xs text-slate-400">VMA : <strong class="text-emerald-400">${ath.vma} km/h</strong></p>
+                        <p class="text-xs text-slate-400 flex items-center gap-1.5 flex-wrap">
+                          <span>VMA : <strong class="text-emerald-400">${ath.vma} km/h</strong></span>
+                          <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${ath.pin ? 'bg-amber-500/15 text-amber-400' : 'bg-slate-800 text-slate-500'}">${ath.pin ? '🔐 PIN actif' : '🔓 Sans PIN'}</span>
+                        </p>
                       </div>
                     </div>
                     <div class="flex items-center gap-1">
@@ -3429,8 +3488,52 @@
             ${ath.bigCards ? 'Activé' : 'Désactivé'}
           </button>
         </div>
+
+        <div class="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="font-bold text-sm">🔐 Mon code PIN d'accès</div>
+              <div class="text-xs text-slate-400">Protège l'ouverture de votre profil depuis l'écran d'accueil (4 à 8 chiffres — seul le coach peut supprimer un PIN actif)</div>
+            </div>
+            <span class="shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold ${ath.pin ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-200 dark:bg-slate-800 text-slate-400'}">
+              ${ath.pin ? '🔐 Activé' : '🔓 Désactivé'}
+            </span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <input id="ath-self-pin" type="password" inputmode="numeric" maxlength="8" placeholder="${ath.pin ? 'Nouveau PIN (4-8 chiffres)' : 'Définir un PIN (4-8 chiffres)'}" class="w-48 bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs font-bold tracking-widest text-center" />
+            <button onclick="saveAthleteSelfPin('${ath.id}')" class="px-4 py-2 rounded-xl text-white font-bold text-xs shadow" style="background: var(--accent-color)">${ath.pin ? 'Modifier le PIN' : 'Activer le PIN'}</button>
+            ${ath.pin ? `<button onclick="lockAthleteSession('${ath.id}')" class="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-xs font-bold" title="Verrouiller immédiatement et revenir à l'accueil">🔒 Verrouiller</button>` : ''}
+          </div>
+        </div>
       </div>
     `;
+  }
+
+  function saveAthleteSelfPin(athleteId) {
+    const ath = state.athletes.find(a => a.id === athleteId);
+    if (!ath) return;
+    const val = (document.getElementById('ath-self-pin')?.value || '').trim();
+    if (!val) {
+      return showToast(ath.pin ? '🔒 Saisissez un nouveau code PIN (seul le coach peut supprimer le PIN)' : '❌ Saisissez un code PIN de 4 à 8 chiffres');
+    }
+    if (val.length < 4 || !/^\d+$/.test(val)) {
+      return showToast('❌ Le code PIN doit contenir entre 4 et 8 chiffres');
+    }
+    ath.pin = val;
+    ui.unlockedAthleteIds = ui.unlockedAthleteIds || [];
+    if (!ui.unlockedAthleteIds.includes(athleteId)) {
+      ui.unlockedAthleteIds.push(athleteId);
+    }
+    saveState();
+    render();
+    showToast('🔐 Code PIN personnel enregistré');
+  }
+
+  function lockAthleteSession(athleteId) {
+    ui.unlockedAthleteIds = (ui.unlockedAthleteIds || []).filter(id => id !== athleteId);
+    ui.view = 'landing';
+    render();
+    showToast('🔒 Profil verrouillé');
   }
 
   /**************************************************************************
@@ -3798,9 +3901,15 @@
       <div class="space-y-4">
         <h3 class="text-lg font-extrabold">${ath ? 'Modifier l\'athlète' : 'Créer un nouvel athlète'}</h3>
         <div class="space-y-3">
-          <div>
-            <label class="text-xs text-slate-400">Nom complet</label>
-            <input id="ath-name" type="text" value="${ath?.name || ''}" placeholder="Ex: Lucas Martin" class="w-full mt-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-3 py-2 text-sm" />
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-slate-400">Nom complet</label>
+              <input id="ath-name" type="text" value="${ath?.name || ''}" placeholder="Ex: Lucas Martin" class="w-full mt-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="text-xs text-slate-400">🔐 Code PIN athlète (optionnel)</label>
+              <input id="ath-pin" type="text" inputmode="numeric" maxlength="8" value="${ath?.pin || ''}" placeholder="4 à 8 chiffres (vide = libre)" class="w-full mt-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-3 py-2 text-sm font-bold tracking-widest" />
+            </div>
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
@@ -3828,22 +3937,31 @@
 
   function saveAthlete(athleteId) {
     const name = document.getElementById('ath-name').value.trim();
+    const pin = (document.getElementById('ath-pin')?.value || '').trim();
     const vma = parseFloat(document.getElementById('ath-vma').value) || 13.5;
     const raceName = document.getElementById('ath-race-name').value.trim();
     const raceDate = document.getElementById('ath-race-date').value;
     const avatar = document.getElementById('ath-avatar').value.trim();
     if (!name) return showToast('Entrez un nom d\'athlète');
+    if (pin && (pin.length < 4 || !/^\d+$/.test(pin))) {
+      return showToast('❌ Le code PIN athlète doit contenir entre 4 et 8 chiffres');
+    }
 
     if (athleteId) {
       const ath = state.athletes.find(a => a.id === athleteId);
       ath.name = name;
+      ath.pin = pin;
       ath.vma = vma;
       ath.avatar = avatar || ath.avatar;
       ath.targetRace = { name: raceName, date: raceDate, distanceKm: 30, dplusM: 1000 };
+      if (!pin) {
+        ui.unlockedAthleteIds = (ui.unlockedAthleteIds || []).filter(id => id !== athleteId);
+      }
     } else {
       const newAth = {
         id: 'ath_' + Date.now(),
         name,
+        pin,
         avatar: avatar || 'https://images.unsplash.com/photo-1552674605-db6ffd4facb5?auto=format&fit=crop&w=200&q=80',
         vma,
         vmaHistory: [{ date: formatDateISO(new Date()), vma, note: 'VMA initiale' }],
