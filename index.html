@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="trailrun-app-version" content="v2.6.0" />
+  <meta name="trailrun-app-version" content="v2.7.0" />
   <title>TrailRun Coach — Plateforme Interactive Trail & Running</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- SDK Firebase Realtime Database -->
@@ -800,7 +800,7 @@
     const monday = formatDateISO(getMonday(new Date()));
     return {
       coachPin: '1234',
-      appVersion: 'v2.6.0',
+      appVersion: 'v2.7.0',
       lastAppUpdate: null,
       coachProfile: {
         name: 'Coach TrailRun',
@@ -831,7 +831,7 @@
         checkIntervalSec: 45
       },
       firebaseConfig: {
-        apiKey: '',
+        apiKey: 'AIzaSyCkUxa3RFSKAWJ98Gzc1I_GcN1UAO7A0ZQ',
         authDomain: 'trailruncoach-1a422.firebaseapp.com',
         databaseURL: 'https://trailruncoach-1a422-default-rtdb.europe-west1.firebasedatabase.app',
         projectId: 'trailruncoach-1a422',
@@ -1356,7 +1356,7 @@
     }
 
     if (out.includes('name="trailrun-build-id"')) {
-      out = out.replace(/<meta\s+name="trailrun-build-id"\s+content="[^"]*"\s*\/?>/i, `<meta name="trailrun-build-id" content="${buildId}" />`);
+      out = out.replace(/<meta\s+name="trailrun-build-id"\s+content="[^"]*"\s*\/?>/i, `<meta name="trailrun-build-id" content="build_1795285678332" />`);
     } else if (out.includes('</head>')) {
       out = out.replace('</head>', `  <meta name="trailrun-build-id" content="${buildId}" />\n</head>`);
     }
