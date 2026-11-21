@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="trailrun-app-version" content="v2.5.0" />
   <title>TrailRun Coach — Plateforme Interactive Trail & Running</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- SDK Firebase Realtime Database -->
@@ -744,7 +745,7 @@
     const monday = formatDateISO(getMonday(new Date()));
     return {
       coachPin: '1234',
-      appVersion: 'v2.4.0',
+      appVersion: 'v2.5.0',
       lastAppUpdate: null,
       coachProfile: {
         name: 'Coach TrailRun',
@@ -764,6 +765,17 @@
           timestamp: new Date(Date.now() - 900000).toISOString()
         }
       ],
+      githubDeployConfig: {
+        owner: '',
+        repo: '',
+        branch: 'main',
+        filePath: 'index.html',
+        token: '',
+        netlifySiteUrl: '',
+        netlifyBuildHook: '',
+        autoCheckEnabled: true,
+        checkIntervalSec: 45
+      },
       firebaseConfig: {
         apiKey: 'AIzaSyCkUxa3RFSKAWJ98Gzc1I_GcN1UAO7A0ZQ',
         authDomain: 'trailruncoach-1a422.firebaseapp.com',
@@ -797,7 +809,20 @@
 
   function ensureDataIntegrity(targetState) {
     if (!targetState) return;
-    if (!targetState.appVersion) targetState.appVersion = 'v2.4.0';
+    if (!targetState.appVersion) targetState.appVersion = 'v2.5.0';
+    if (!targetState.githubDeployConfig) {
+      targetState.githubDeployConfig = {
+        owner: '',
+        repo: '',
+        branch: 'main',
+        filePath: 'index.html',
+        token: '',
+        netlifySiteUrl: '',
+        netlifyBuildHook: '',
+        autoCheckEnabled: true,
+        checkIntervalSec: 45
+      };
+    }
     if (!targetState.coachProfile) {
       targetState.coachProfile = {
         name: 'Coach TrailRun',
@@ -870,6 +895,9 @@
                 render();
                 isApplyingRemoteUpdate = false;
                 showToast('🔔 Mise à jour synchronisée en direct');
+                if (incoming.lastPublishedRelease) {
+                  setTimeout(() => checkForRemoteNetlifyUpdate(false), 4000);
+                }
               }
             } catch (err) {
               console.error('Erreur parsing Firebase', err);
@@ -1113,6 +1141,319 @@
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     showToast('💾 Fichier index.html exporté !');
+  }
+
+
+  /**************************************************************************
+   * PROPAGATION MULTI-APPAREILS (GIT + NETLIFY + FIREBASE) & API GITHUB
+   **************************************************************************/
+  const LOCAL_GITHUB_TOKEN_KEY = 'trailrun_github_pat_secure';
+  const LAST_REMOTE_BUILD_KEY = 'trailrun_last_remote_build_sig';
+  let netlifyPollTimer = null;
+
+  function getGithubToken() {
+    return localStorage.getItem(LOCAL_GITHUB_TOKEN_KEY) || state.githubDeployConfig?.token || '';
+  }
+
+  function saveGithubDeploySettings() {
+    ensureDataIntegrity(state);
+    const owner = (document.getElementById('gh-owner')?.value || '').trim();
+    const repo = (document.getElementById('gh-repo')?.value || '').trim();
+    const branch = (document.getElementById('gh-branch')?.value || 'main').trim() || 'main';
+    const filePath = (document.getElementById('gh-filepath')?.value || 'index.html').trim() || 'index.html';
+    const token = (document.getElementById('gh-token')?.value || '').trim();
+    const netlifySiteUrl = (document.getElementById('netlify-site-url')?.value || '').trim().replace(/\/$/, '');
+    const netlifyBuildHook = (document.getElementById('netlify-build-hook')?.value || '').trim();
+    const autoCheckEnabled = !!document.getElementById('netlify-autocheck')?.checked;
+    const checkIntervalSec = Math.max(15, parseInt(document.getElementById('netlify-interval')?.value || '45', 10) || 45);
+
+    if (token) {
+      localStorage.setItem(LOCAL_GITHUB_TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(LOCAL_GITHUB_TOKEN_KEY);
+    }
+
+    state.githubDeployConfig = {
+      owner,
+      repo,
+      branch,
+      filePath,
+      token: '', // Ne jamais exposer le PAT en clair dans le state partagé Firebase
+      netlifySiteUrl,
+      netlifyBuildHook,
+      autoCheckEnabled,
+      checkIntervalSec
+    };
+
+    saveState();
+    startAutoUpdateWatcher();
+    render();
+    showToast('✅ Configuration GitHub & Netlify enregistrée');
+  }
+
+  async function testGithubConnection() {
+    const owner = (document.getElementById('gh-owner')?.value || state.githubDeployConfig?.owner || '').trim();
+    const repo = (document.getElementById('gh-repo')?.value || state.githubDeployConfig?.repo || '').trim();
+    const branch = (document.getElementById('gh-branch')?.value || state.githubDeployConfig?.branch || 'main').trim();
+    const filePath = (document.getElementById('gh-filepath')?.value || state.githubDeployConfig?.filePath || 'index.html').trim();
+    const token = (document.getElementById('gh-token')?.value || getGithubToken()).trim();
+
+    if (!owner || !repo || !token) {
+      showToast('❌ Renseignez Propriétaire, Dépôt et Token GitHub (PAT)');
+      return;
+    }
+
+    const statusEl = document.getElementById('gh-api-status');
+    if (statusEl) statusEl.innerHTML = `<span class="text-amber-400">⏳ Vérification de l'accès au dépôt ${owner}/${repo}...</span>`;
+
+    try {
+      const apiUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${filePath.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`;
+      const res = await fetch(apiUrl, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28'
+        }
+      });
+
+      if (res.status === 404) {
+        if (statusEl) statusEl.innerHTML = `<span class="text-sky-400">ℹ️ Dépôt accessible, le fichier <code>${filePath}</code> sera créé lors de la première publication.</span>`;
+        showToast('✅ Connexion GitHub OK (nouveau fichier prêt)');
+        return;
+      }
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || `Erreur HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (statusEl) {
+        statusEl.innerHTML = `<span class="text-emerald-400">✅ Connecté à <strong>${owner}/${repo}</strong> (${branch}) • SHA actif : <code>${(data.sha || '').slice(0, 7)}</code> (${Math.round((data.size || 0)/1024)} Ko)</span>`;
+      }
+      showToast('✅ Connexion API GitHub validée !');
+    } catch (err) {
+      if (statusEl) statusEl.innerHTML = `<span class="text-rose-400">❌ Échec connexion GitHub : ${err.message}</span>`;
+      showToast('❌ ' + err.message);
+    }
+  }
+
+  function encodeUtf8ToBase64(str) {
+    const bytes = new TextEncoder().encode(str);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function injectVersionMetadataIntoHtml(rawHtml, version, notes) {
+    const safeVersion = String(version || 'v2.5.0').replace(/"/g, '&quot;');
+    const buildId = 'build_' + Date.now();
+    let out = rawHtml;
+
+    if (out.includes('name="trailrun-app-version"')) {
+      out = out.replace(/<meta\s+name="trailrun-app-version"\s+content="[^"]*"\s*\/?>/i, `<meta name="trailrun-app-version" content="${safeVersion}" />`);
+    } else if (out.includes('</head>')) {
+      out = out.replace('</head>', `  <meta name="trailrun-app-version" content="${safeVersion}" />\n</head>`);
+    }
+
+    if (out.includes('name="trailrun-build-id"')) {
+      out = out.replace(/<meta\s+name="trailrun-build-id"\s+content="[^"]*"\s*\/?>/i, `<meta name="trailrun-build-id" content="${buildId}" />`);
+    } else if (out.includes('</head>')) {
+      out = out.replace('</head>', `  <meta name="trailrun-build-id" content="${buildId}" />\n</head>`);
+    }
+
+    out = out.replace(/appVersion:\s*'v[0-9.]+'/, `appVersion: '${version.replace(/'/g, '')}'`);
+    return { html: out, buildId };
+  }
+
+  async function publishToGithubAndNetlify(useCurrentIfEmpty = false) {
+    ensureDataIntegrity(state);
+    const owner = (document.getElementById('gh-owner')?.value || state.githubDeployConfig?.owner || '').trim();
+    const repo = (document.getElementById('gh-repo')?.value || state.githubDeployConfig?.repo || '').trim();
+    const branch = (document.getElementById('gh-branch')?.value || state.githubDeployConfig?.branch || 'main').trim() || 'main';
+    const filePath = (document.getElementById('gh-filepath')?.value || state.githubDeployConfig?.filePath || 'index.html').trim() || 'index.html';
+    const token = (document.getElementById('gh-token')?.value || getGithubToken()).trim();
+    const netlifyHook = (document.getElementById('netlify-build-hook')?.value || state.githubDeployConfig?.netlifyBuildHook || '').trim();
+    const version = (document.getElementById('ota-version-input')?.value || state.appVersion || 'v2.5.0').trim();
+    const notes = (document.getElementById('ota-notes-input')?.value || '').trim() || `Déploiement ${version} via Git + Netlify`;
+
+    let rawHtml = (document.getElementById('ota-code-textarea')?.value || '').trim();
+    if (!rawHtml && useCurrentIfEmpty) {
+      rawHtml = getCurrentDocumentSource();
+    }
+
+    if (!owner || !repo || !token) {
+      showToast('❌ Configurez d’abord Propriétaire, Dépôt et Token GitHub.');
+      return;
+    }
+
+    if (!rawHtml || rawHtml.length < 150 || (!rawHtml.includes('<html') && !rawHtml.includes('<body'))) {
+      showToast('❌ Chargez ou collez le code index.html à publier sur GitHub.');
+      return;
+    }
+
+    // Sauvegarder la config (sans le token dans state)
+    saveGithubDeploySettings();
+
+    const statusEl = document.getElementById('gh-api-status');
+    if (statusEl) {
+      statusEl.innerHTML = `<span class="text-amber-400">⏳ 1/3 Récupération du SHA actuel sur GitHub (${owner}/${repo}@${branch})...</span>`;
+    }
+
+    try {
+      const encodedPath = filePath.split('/').map(encodeURIComponent).join('/');
+      const contentsUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}`;
+
+      // 1. Récupérer le SHA existant du fichier sur la branche cible
+      let existingSha = null;
+      const getRes = await fetch(`${contentsUrl}?ref=${encodeURIComponent(branch)}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28'
+        }
+      });
+      if (getRes.ok) {
+        const existingData = await getRes.json();
+        existingSha = existingData.sha || null;
+      } else if (getRes.status !== 404) {
+        const errInfo = await getRes.json().catch(() => ({}));
+        throw new Error(errInfo.message || `Erreur lecture GitHub (${getRes.status})`);
+      }
+
+      // 2. Injecter les métadonnées de version/build et encoder en Base64 UTF-8
+      const { html: preparedHtml, buildId } = injectVersionMetadataIntoHtml(rawHtml, version, notes);
+      const base64Content = encodeUtf8ToBase64(preparedHtml);
+
+      if (statusEl) {
+        statusEl.innerHTML = `<span class="text-amber-400">⏳ 2/3 Commit & Push de <code>${filePath}</code> (${version}) vers GitHub...</span>`;
+      }
+
+      const commitBody = {
+        message: `🚀 Release ${version}: ${notes}`,
+        content: base64Content,
+        branch
+      };
+      if (existingSha) commitBody.sha = existingSha;
+
+      const putRes = await fetch(contentsUrl, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'X-GitHub-Api-Version': '2022-11-28'
+        },
+        body: JSON.stringify(commitBody)
+      });
+
+      if (!putRes.ok) {
+        const putErr = await putRes.json().catch(() => ({}));
+        throw new Error(putErr.message || `Erreur commit GitHub (${putRes.status})`);
+      }
+
+      const commitResult = await putRes.json();
+      const newCommitSha = (commitResult.commit?.sha || '').slice(0, 7);
+
+      // 3. Déclencher le Build Hook Netlify optionnel si renseigné
+      let netlifyMsg = 'Déploiement continu Git → Netlify déclenché automatiquement.';
+      if (netlifyHook) {
+        if (statusEl) {
+          statusEl.innerHTML = `<span class="text-amber-400">⏳ 3/3 Déclenchement du Build Hook Netlify...</span>`;
+        }
+        try {
+          await fetch(netlifyHook, { method: 'POST', mode: 'no-cors' });
+          netlifyMsg = 'Build Hook Netlify déclenché avec succès !';
+        } catch (hookErr) {
+          netlifyMsg = 'Push GitHub OK (Build Hook Netlify ignoré par CORS).';
+        }
+      }
+
+      // 4. Mettre à jour l'état global & diffuser le signal de propagation sur tous les appareils connectés
+      localStorage.setItem(LAST_REMOTE_BUILD_KEY, `${version}|${buildId}`);
+      state.lastPublishedRelease = {
+        version,
+        notes,
+        buildId,
+        commitSha: newCommitSha,
+        repo: `${owner}/${repo}`,
+        branch,
+        publishedAt: new Date().toISOString()
+      };
+
+      broadcastSystemUpdateNotifications(version, `${notes} (Commit GitHub #${newCommitSha} • Propagation Netlify active)`);
+      await saveState(true);
+
+      if (statusEl) {
+        statusEl.innerHTML = `<span class="text-emerald-400">✅ Publié sur GitHub (commit <code>#${newCommitSha}</code>) • ${netlifyMsg}</span>`;
+      }
+
+      render();
+      showToast(`🚀 ${version} publié sur GitHub & propagé vers Netlify !`);
+    } catch (err) {
+      if (statusEl) {
+        statusEl.innerHTML = `<span class="text-rose-400">❌ Échec publication GitHub : ${err.message}</span>`;
+      }
+      showToast('❌ ' + err.message);
+    }
+  }
+
+  // Surveillance automatique sur tous les appareils (Coach & Athlètes) de la version hébergée sur Netlify / Git
+  async function checkForRemoteNetlifyUpdate(manualTrigger = false) {
+    try {
+      const baseUrl = (state.githubDeployConfig?.netlifySiteUrl || window.location.origin + window.location.pathname).split('#')[0].split('?')[0];
+      if (!baseUrl.startsWith('http')) {
+        if (manualTrigger) showToast('ℹ️ Surveillance active dès que le site est hébergé sur Netlify (HTTPS).');
+        return;
+      }
+
+      const fetchUrl = `${baseUrl}?_ota_chk=${Date.now()}`;
+      const res = await fetch(fetchUrl, { cache: 'no-store' });
+      if (!res.ok) return;
+      const remoteHtml = await res.text();
+
+      const verMatch = remoteHtml.match(/<meta\s+name="trailrun-app-version"\s+content="([^"]+)"/i);
+      const buildMatch = remoteHtml.match(/<meta\s+name="trailrun-build-id"\s+content="([^"]+)"/i);
+      const remoteVer = verMatch ? verMatch[1] : null;
+      const remoteBuild = buildMatch ? buildMatch[1] : null;
+
+      const localVer = document.querySelector('meta[name="trailrun-app-version"]')?.getAttribute('content') || state.appVersion || 'v2.5.0';
+      const localBuild = document.querySelector('meta[name="trailrun-build-id"]')?.getAttribute('content') || '';
+
+      const remoteSig = `${remoteVer || ''}|${remoteBuild || ''}`;
+      const localSig = `${localVer}|${localBuild}`;
+      const lastAppliedSig = localStorage.getItem(LAST_REMOTE_BUILD_KEY) || localSig;
+
+      if (remoteVer && (remoteVer !== localVer || (remoteBuild && remoteBuild !== localBuild)) && remoteSig !== lastAppliedSig) {
+        localStorage.setItem(LAST_REMOTE_BUILD_KEY, remoteSig);
+        localStorage.removeItem(OTA_STORAGE_KEY);
+        showToast(`🚀 Nouvelle version ${remoteVer} détectée sur Netlify ! Mise à jour de l'appareil...`);
+        setTimeout(() => {
+          window.location.replace(`${baseUrl}?v=${encodeURIComponent(remoteVer)}_${Date.now()}`);
+        }, 1200);
+      } else if (manualTrigger) {
+        showToast(`✅ Votre appareil est déjà à jour (${localVer})`);
+      }
+    } catch (e) {
+      if (manualTrigger) showToast('⚠️ Impossible de joindre le serveur Netlify pour le moment.');
+    }
+  }
+
+  function startAutoUpdateWatcher() {
+    if (netlifyPollTimer) {
+      clearInterval(netlifyPollTimer);
+      netlifyPollTimer = null;
+    }
+    const enabled = state.githubDeployConfig?.autoCheckEnabled !== false;
+    const intervalSec = Math.max(15, state.githubDeployConfig?.checkIntervalSec || 45);
+    if (enabled) {
+      netlifyPollTimer = setInterval(() => {
+        checkForRemoteNetlifyUpdate(false);
+      }, intervalSec * 1000);
+    }
   }
 
   async function pullFromFirebase() {
@@ -2401,16 +2742,110 @@
           </span>
         </div>
 
-        <!-- SECTION MISE À JOUR APPLICATIVE À CHAUD (HOT-UPDATE INDEX.HTML) -->
+        <!-- SECTION 1 : PUBLICATION DIRECTE VIA L'API GITHUB & PROPAGATION NETLIFY -->
+        <div class="bg-white dark:bg-slate-900 border-2 border-sky-500/40 rounded-2xl p-5 space-y-5 shadow-lg">
+          <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
+            <div class="space-y-1">
+              <div class="flex items-center gap-2">
+                <span class="text-xl">🐙</span>
+                <h3 class="font-black text-base sm:text-lg">Publication directe GitHub API & Propagation Netlify</h3>
+              </div>
+              <p class="text-xs text-slate-500 dark:text-slate-400">
+                Poussez directement la nouvelle version de <code>index.html</code> sur votre dépôt GitHub. Netlify déploie automatiquement le site et tous les appareils (Coach & Athlètes) reçoivent la mise à jour sans manipulation.
+              </p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button onclick="checkForRemoteNetlifyUpdate(true)" class="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-xs font-bold">
+                🔄 Vérifier version en ligne
+              </button>
+              <button onclick="testGithubConnection()" class="px-3 py-2 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 text-sky-400 text-xs font-bold">
+                🔌 Tester connexion GitHub
+              </button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <label class="text-xs font-bold text-slate-400 block mb-1">Propriétaire GitHub *</label>
+              <input id="gh-owner" type="text" value="${state.githubDeployConfig?.owner || ''}" placeholder="Ex: mon-compte-git" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold" />
+            </div>
+            <div>
+              <label class="text-xs font-bold text-slate-400 block mb-1">Nom du Dépôt (Repo) *</label>
+              <input id="gh-repo" type="text" value="${state.githubDeployConfig?.repo || ''}" placeholder="Ex: trailrun-coach" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold" />
+            </div>
+            <div>
+              <label class="text-xs font-bold text-slate-400 block mb-1">Branche cible</label>
+              <input id="gh-branch" type="text" value="${state.githubDeployConfig?.branch || 'main'}" placeholder="main" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold" />
+            </div>
+            <div>
+              <label class="text-xs font-bold text-slate-400 block mb-1">Chemin du fichier</label>
+              <input id="gh-filepath" type="text" value="${state.githubDeployConfig?.filePath || 'index.html'}" placeholder="index.html" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs font-bold text-slate-400 block mb-1">GitHub Personal Access Token (PAT) *</label>
+              <input id="gh-token" type="password" value="${getGithubToken()}" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx (scope: repo)" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono" />
+              <span class="text-[10px] text-slate-400">Stocké uniquement dans le navigateur sécurisé du Coach (jamais partagé aux athlètes).</span>
+            </div>
+            <div>
+              <label class="text-xs font-bold text-slate-400 block mb-1">URL publique Netlify (pour détection auto multi-appareils)</label>
+              <input id="netlify-site-url" type="url" value="${state.githubDeployConfig?.netlifySiteUrl || (window.location.origin.startsWith('http') ? window.location.origin : '')}" placeholder="https://trailrun-coach.netlify.app" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs" />
+              <span class="text-[10px] text-slate-400">Permet à chaque appareil de détecter automatiquement les nouveaux déploiements Netlify.</span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+            <div>
+              <label class="text-xs font-bold text-slate-400 block mb-1">Netlify Build Hook URL (optionnel)</label>
+              <input id="netlify-build-hook" type="url" value="${state.githubDeployConfig?.netlifyBuildHook || ''}" placeholder="https://api.netlify.com/build_hooks/..." class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs" />
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+              <label class="flex items-center gap-2 text-xs font-bold cursor-pointer">
+                <input id="netlify-autocheck" type="checkbox" ${state.githubDeployConfig?.autoCheckEnabled !== false ? 'checked' : ''} class="w-4 h-4 accent-emerald-500" />
+                <span>Propagation auto sur tous les appareils</span>
+              </label>
+              <div class="flex items-center gap-1 text-xs">
+                <span class="text-slate-400">Toutes les</span>
+                <input id="netlify-interval" type="number" min="15" max="600" value="${state.githubDeployConfig?.checkIntervalSec || 45}" class="w-14 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1 text-center font-bold" />
+                <span class="text-slate-400">sec</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="gh-api-status" class="text-xs font-semibold">
+            ${state.lastPublishedRelease
+              ? `<span class="text-emerald-400">✅ Dernière publication GitHub : <strong>${state.lastPublishedRelease.version}</strong> (commit <code>#${state.lastPublishedRelease.commitSha}</code> sur <code>${state.lastPublishedRelease.repo}</code> le ${new Date(state.lastPublishedRelease.publishedAt).toLocaleString('fr-FR')})</span>`
+              : `<span class="text-slate-400">ℹ️ Configurez votre dépôt GitHub ci-dessus pour publier en 1 clic vers Git + Netlify.</span>`
+            }
+          </div>
+
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+            <button onclick="saveGithubDeploySettings()" class="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-xs font-bold">
+              💾 Enregistrer la config Git & Netlify
+            </button>
+            <div class="flex flex-wrap items-center gap-2">
+              <button onclick="publishToGithubAndNetlify(true)" class="px-4 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-extrabold text-xs shadow">
+                📤 Pousser la version active vers GitHub + Netlify
+              </button>
+              <button onclick="publishToGithubAndNetlify(false)" class="px-4 py-2.5 rounded-xl text-slate-950 font-black text-xs shadow" style="background: var(--accent-color)">
+                🚀 Publier le nouveau index.html sur GitHub + Netlify
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- SECTION 2 : PRÉPARATION DU FICHIER INDEX.HTML & MISE À JOUR À CHAUD LOCALE (OTA) -->
         <div class="bg-white dark:bg-slate-900 border-2 border-emerald-500/40 rounded-2xl p-5 space-y-5 shadow-lg">
           <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
             <div class="space-y-1">
               <div class="flex items-center gap-2">
                 <span class="text-xl">🚀</span>
-                <h3 class="font-black text-base sm:text-lg">Mise à jour de l'application (index.html)</h3>
+                <h3 class="font-black text-base sm:text-lg">Source de mise à jour (index.html) & Test à chaud</h3>
               </div>
               <p class="text-xs text-slate-500 dark:text-slate-400">
-                Importez ou collez un nouveau code <code>index.html</code>. Vos données (athlètes, plannings, réactions) sont sauvegardées automatiquement et une notification de mise à jour est diffusée sur l'interface Coach et toutes les interfaces Athlètes.
+                Chargez votre fichier <code>index.html</code> ci-dessous pour le publier directement sur GitHub + Netlify (bouton bleu/vert ci-dessus) ou le tester immédiatement en local à chaud.
               </p>
             </div>
             <div class="flex flex-wrap items-center gap-2">
@@ -2426,7 +2861,7 @@
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label class="text-xs font-bold text-slate-400 block mb-1">Numéro de version *</label>
-              <input id="ota-version-input" type="text" value="v2.5.0" placeholder="Ex: v2.5.0" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs font-extrabold" />
+              <input id="ota-version-input" type="text" value="v2.6.0" placeholder="Ex: v2.6.0" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs font-extrabold" />
             </div>
             <div class="sm:col-span-2">
               <label class="text-xs font-bold text-slate-400 block mb-1">Notes de mise à jour (affichées dans les notifications)</label>
@@ -2462,11 +2897,16 @@
 
           <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
             <div class="text-[11px] text-slate-500 dark:text-slate-400">
-              🛡️ Sauvegarde automatique des athlètes & plannings avant injection à chaud.
+              🛡️ Sauvegarde automatique des athlètes & plannings avant injection à chaud ou push GitHub.
             </div>
-            <button onclick="deployOtaHtmlUpdate()" class="px-5 py-3 rounded-xl text-slate-950 font-black text-xs sm:text-sm shadow-lg transition hover:opacity-95" style="background: var(--accent-color)">
-              🚀 Appliquer la mise à jour & Notifier toutes les interfaces
-            </button>
+            <div class="flex flex-wrap items-center gap-2">
+              <button onclick="deployOtaHtmlUpdate()" class="px-4 py-2.5 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-xs font-extrabold">
+                ⚡ Tester à chaud en local
+              </button>
+              <button onclick="publishToGithubAndNetlify(false)" class="px-5 py-2.5 rounded-xl text-slate-950 font-black text-xs sm:text-sm shadow-lg transition hover:opacity-95" style="background: var(--accent-color)">
+                🚀 Publier via GitHub API & Propager sur Netlify
+              </button>
+            </div>
           </div>
 
           <!-- HISTORIQUE DES VERSIONS & ROLLBACK -->
@@ -3817,6 +4257,8 @@
     initFirebase();
     await pullFromFirebase();
     render();
+    startAutoUpdateWatcher();
+    setTimeout(() => checkForRemoteNetlifyUpdate(false), 3000);
     if (window.__TRAILRUN_OTA_META__) {
       showToast(`🚀 Application mise à jour en ${window.__TRAILRUN_OTA_META__.version} !`);
       if (ui.view === 'coach') {
